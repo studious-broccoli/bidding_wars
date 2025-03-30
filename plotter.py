@@ -4,12 +4,20 @@ import umap
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.preprocessing import StandardScaler
+
+
 # ------------------------------------------------------------------------------------------------------------
 # Plotting Function
 # ------------------------------------------------------------------------------------------------------------
+def smooth(y, box_pts=20):
+    box = np.ones(box_pts) / box_pts
+    return np.convolve(y, box, mode='same')
+
+
 def plot_reward_curve(rewards):
     plt.figure(figsize=(10, 5))
-    plt.plot(rewards, label="Episode Reward")
+    # plt.plot(rewards, label="Episode Reward")
+    plt.plot(smooth(rewards))
     plt.xlabel("Episode")
     plt.ylabel("Total Reward")
     plt.title("Reward Curve over Training")
@@ -18,7 +26,7 @@ def plot_reward_curve(rewards):
     plt.tight_layout()
     plt.savefig("reward_curve.png")
     plt.close('all')
-    print("[✓] Reward curve saved as 'reward_curve.png'")
+    print("[✓] 💰 Reward curve saved as 'reward_curve.png'")
 
 
 # def visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.npy", label_type="time_of_day"):
@@ -44,7 +52,7 @@ def visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.n
         return
 
     if method == "umap":
-        reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=42)
+        reducer = umap.UMAP(init='random', n_neighbors=15, min_dist=0.1, random_state=42)
         reduced = reducer.fit_transform(X)
     else:
         tsne = TSNE(n_components=2, perplexity=30, n_iter=1000, random_state=42)
@@ -78,7 +86,7 @@ def cluster_embeddings(method="kmeans", embedding_file="encoded_states_pytorch.n
         labels = model.fit_predict(X_scaled)
 
     # Visualize the clusters in 2D
-    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=42)
+    reducer = umap.UMAP(init='random', n_neighbors=15, min_dist=0.1, random_state=42)
     reduced = reducer.fit_transform(X)
 
     plt.figure(figsize=(8, 6))
