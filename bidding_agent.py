@@ -1,23 +1,18 @@
 import pdb
 import gym
 from gym import spaces
-import numpy as np
 import random
 from stable_baselines3 import PPO
 import pandas as pd
 import os
 import csv
-import matplotlib.pyplot as plt
-import umap
-from sklearn.manifold import TSNE
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.cluster import KMeans, DBSCAN
-from sklearn.preprocessing import StandardScaler
+from plotter import *
 
 
 
@@ -38,139 +33,56 @@ export LANG="en_US.UTF-8"
 
 """
 
-# ------------------------------------------------------------------------------------------------------------
-# Plotting Function
-# ------------------------------------------------------------------------------------------------------------
-def plot_reward_curve(rewards):
-    plt.figure(figsize=(10, 5))
-    plt.plot(rewards, label="Episode Reward")
-    plt.xlabel("Episode")
-    plt.ylabel("Total Reward")
-    plt.title("Reward Curve over Training")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig("reward_curve.png")
-    plt.close('all')
-    print("[✓] Reward curve saved as 'reward_curve.png'")
-
-
-# def visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.npy", label_type="time_of_day"):
-#     X = np.load(embedding_file)
-#     if X.shape[0] < 5:
-#         print(f"[⚠️] Not enough data to visualize embeddings: only {X.shape[0]} samples.")
-#         return
-#
-#     labels = np.load(f"labels_{label_type}.npy", allow_pickle=True)
-#     if len(labels) != len(X):
-#         print(f"[⚠️] Label and embedding size mismatch: {len(labels)} vs {len(X)}")
-#         return
-
-def visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.npy", label_type="time_of_day"):
-    X = np.load(embedding_file)
-    if X.shape[0] < 5:
-        print(f"[⚠️] Not enough data to visualize embeddings: only {X.shape[0]} samples.")
-        return
-
-    labels = np.load(f"labels_{label_type}.npy", allow_pickle=True)
-    if len(labels) != len(X):
-        print(f"[⚠️] Label and embedding size mismatch: {len(labels)} vs {len(X)}")
-        return
-
-    if method == "umap":
-        reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=42)
-        reduced = reducer.fit_transform(X)
-    else:
-        tsne = TSNE(n_components=2, perplexity=30, n_iter=1000, random_state=42)
-        reduced = tsne.fit_transform(X)
-
-    plt.figure(figsize=(8, 6))
-    unique_labels = np.unique(labels)
-    for label in unique_labels:
-        mask = labels == label
-        plt.scatter(reduced[mask, 0], reduced[mask, 1], label=str(label), s=15, alpha=0.6)
-
-    plt.title(f"{method.upper()} Projection Colored by {label_type}")
-    plt.legend(title=label_type)
-    plt.tight_layout()
-    plt.grid(True)
-    plt.savefig(f"{method}_{label_type}_plot.png")
-    plt.close()
-
-
-def cluster_embeddings(method="kmeans", embedding_file="encoded_states_pytorch.npy", n_clusters=5):
-    X = np.load(embedding_file)
-
-    # Optional: normalize for DBSCAN
-    X_scaled = StandardScaler().fit_transform(X)
-
-    if method == "kmeans":
-        model = KMeans(n_clusters=n_clusters, random_state=42)
-        labels = model.fit_predict(X)
-    else:
-        model = DBSCAN(eps=0.5, min_samples=5)
-        labels = model.fit_predict(X_scaled)
-
-    # Visualize the clusters in 2D
-    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=42)
-    reduced = reducer.fit_transform(X)
-
-    plt.figure(figsize=(8, 6))
-    unique_labels = np.unique(labels)
-    for label in unique_labels:
-        mask = labels == label
-        color = 'gray' if label == -1 else None  # DBSCAN noise
-        plt.scatter(reduced[mask, 0], reduced[mask, 1], s=15, alpha=0.6, label=f"Cluster {label}", c=color)
-
-    plt.title(f"{method.upper()} Clustering on Encoded Embeddings")
-    plt.xlabel("UMAP Dim 1")
-    plt.ylabel("UMAP Dim 2")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(f"{method}_clusters.png")
-    plt.close()
-
-    print(f"[✓] Cluster plot saved as '{method}_clusters.png'")
-    return labels
-
-
-def compare_rewards(bandit_rewards, ppo_rewards):
-    plt.figure(figsize=(10, 5))
-    plt.plot(bandit_rewards, label="Bandit (Offline)", alpha=0.8)
-    plt.plot(ppo_rewards, label="PPO (Online Rollout)", alpha=0.8)
-    plt.xlabel("Episode / Step")
-    plt.ylabel("Reward")
-    plt.title("Reward Comparison: Bandit vs PPO")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig("ppo_vs_bandit_rewards.png")
-    plt.close()
-    print("[✓] Comparison plot saved as 'ppo_vs_bandit_rewards.png'")
 
 # ------------------------------------------------------------------------------------------------------------
 # Simulated Data
+# 👵 Older users respond better to high bids
+# 🌅 Certain times of day have higher engagement
+# 📈 Users with higher "history" respond more
+# 🧠 Bids matter, but only in the right context
 # ------------------------------------------------------------------------------------------------------------
 np.random.seed(42)
-
-# Number of simulated data points
 num_samples = 1000
 
-# Simulated viewer metadata
-viewer_age = np.random.randint(18, 70, size=num_samples)  # Age between 18 and 70
+# Viewer metadata
+viewer_age = np.random.randint(18, 70, size=num_samples)
 viewer_gender = np.random.choice(['male', 'female', 'non-binary'], size=num_samples)
-# Simulated time of day categories
 time_of_day = np.random.choice(['morning', 'afternoon', 'evening', 'night'], size=num_samples)
-# Simulated history
 history = np.random.randint(0, 20, size=num_samples)
-
-# Simulated action: bid levels (0: no bid, 1: low, 2: medium, 3: high)
 bid = np.random.choice([0, 1, 2, 3], size=num_samples)
 
-# Simulated reward: a function of the bid and randomness
-reward = np.where(bid == 0, 0, np.random.rand(num_samples) * bid)
+# Encoding helper
+def encode_gender(g):
+    return {'male': 0, 'female': 1, 'non-binary': 2}[g]
 
+def encode_time(t):
+    return {'morning': 0, 'afternoon': 1, 'evening': 2, 'night': 3}[t]
+
+# Reward model with correlation
+reward = []
+for i in range(num_samples):
+    base = 0.1
+
+    # Positively correlated factors
+    age_factor = (viewer_age[i] - 18) / 52  # normalized
+    history_factor = history[i] / 20
+    time_factor = encode_time(time_of_day[i]) / 3
+    gender_factor = encode_gender(viewer_gender[i]) / 2
+
+    # Add correlation: high bid + older age + active history + evening time
+    signal = (
+        0.4 * bid[i] / 3 +
+        0.2 * age_factor +
+        0.2 * history_factor +
+        0.1 * time_factor +
+        0.1 * gender_factor
+    )
+
+    noise = np.random.normal(loc=0.0, scale=0.05)
+    reward_val = max(0.0, min(1.0, signal + noise))  # clamp to [0, 1]
+    reward.append(reward_val)
+
+# Build DataFrame
 df = pd.DataFrame({
     'viewer_age': viewer_age,
     'viewer_gender': viewer_gender,
@@ -182,10 +94,9 @@ df = pd.DataFrame({
 
 csv_filename = 'simulated_bid_data.csv'
 df.to_csv(csv_filename, index=False)
-print(f"Simulated dataset saved as {csv_filename}")
 
-print(df.head(5))
-print(df.shape)
+print(f"Simulated dataset saved as {csv_filename}")
+print(df.head())
 print(df.describe())
 
 # ------------------------------------------------------------------------------------------------------------
@@ -269,6 +180,10 @@ def train_contextual_bandit(env, episodes=500, log_path='bandit_logs.csv'):
     rewards = []
     log_data = []
 
+    all_embeddings = []
+    all_time_of_day = []
+    all_bids = []
+
     for episode in range(episodes):
         state = env.reset()
         done = False
@@ -284,29 +199,37 @@ def train_contextual_bandit(env, episodes=500, log_path='bandit_logs.csv'):
             steps += 1
 
         rewards.append(total_reward)
-
         log_data.append({
             "episode": episode,
             "reward": total_reward,
             "steps": steps
         })
 
+        # Accumulate data
+        all_embeddings.extend(env.state_embeddings)
+        all_time_of_day.extend(env.labels["time_of_day"])
+        all_bids.extend(env.labels["bid"])
+
         if episode % 100 == 0:
             print(f"Episode {episode}: Total Reward = {total_reward:.2f}")
 
-    # Export logs
+    # Save logs
     keys = log_data[0].keys()
     with open(log_path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=keys)
         writer.writeheader()
         writer.writerows(log_data)
+
     print(f"[✓] Training log saved to {log_path}")
 
-    # Export state embeddings
-    np.save("state_embeddings.npy", np.array(env.state_embeddings))
-    print("[✓] Final state embeddings saved to 'state_embeddings.npy'")
+    # Save all accumulated data
+    np.save("state_embeddings.npy", np.array(all_embeddings))
+    np.save("labels_time_of_day.npy", np.array(all_time_of_day))
+    np.save("labels_bid.npy", np.array(all_bids))
+    print(f"[✓] Saved {len(all_embeddings)} state embeddings across {episodes} episodes.")
 
     return agent, rewards
+
 
 
 # ------------------------------------------------------------------------------------------------------------
@@ -412,9 +335,9 @@ if __name__ == "__main__":
     plot_reward_curve(bandit_rewards)
 
     # === 2. Save state embeddings and labels ===
-    np.save("state_embeddings.npy", np.array(env.state_embeddings))
-    np.save("labels_time_of_day.npy", np.array(env.labels["time_of_day"]))
-    np.save("labels_bid.npy", np.array(env.labels["bid"]))
+    # np.save("state_embeddings.npy", np.array(env.state_embeddings))
+    # np.save("labels_time_of_day.npy", np.array(env.labels["time_of_day"]))
+    # np.save("labels_bid.npy", np.array(env.labels["bid"]))
 
     # === 3. Train Autoencoder (PyTorch) ===
     encoded_states = train_autoencoder_pytorch(embeddings_path='state_embeddings.npy')
