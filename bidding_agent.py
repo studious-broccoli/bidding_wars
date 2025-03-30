@@ -45,6 +45,26 @@ print(df.head())
 print(df.describe())
 
 
+def test_oracle_policy(env):
+    env.reset()
+    total_reward = 0
+    for _ in range(100):
+        obs = env._get_obs()
+        row = env.data.iloc[env.current_index]
+        age_factor = (row['viewer_age'] - 18) / 52
+        history_factor = row['history'] / 20
+        time_factor = ['morning', 'afternoon', 'evening', 'night'].index(row['time_of_day']) / 3
+        gender_factor = {'male': 0, 'female': 1, 'non-binary': 2}[row['viewer_gender']] / 2
+        context_score = (0.3 * age_factor + 0.3 * history_factor +
+                         0.2 * time_factor + 0.2 * gender_factor) * 3
+        optimal_bid = int(np.clip(round(context_score), 0, 3))
+        _, reward, done, _ = env.step(optimal_bid)
+        total_reward += reward
+        if done:
+            break
+    print(f"Oracle policy reward (perfect bidding): {total_reward:.2f}")
+
+
 # ------------------------------------------------------------------------------------------------------------
 # Define a custom Gym environment for the bidding problem.
 # ------------------------------------------------------------------------------------------------------------
@@ -59,10 +79,16 @@ class BiddingEnv(gym.Env):
         self.max_steps = 100
         self.state_embeddings = []  # Track states
 
+    def seed(self, seed=None):
+        np.random.seed(seed)
+        random.seed(seed)
+
     def reset(self):
-        self.current_index = random.randint(0, self.num_samples - self.max_steps)
+        self.start_index = random.randint(0, self.num_samples - self.max_steps)
+        self.current_index = self.start_index
+        self.steps_taken = 0
         self.state_embeddings = []
-        self.labels = {"time_of_day": [], "bid": []}  # NEW
+        self.labels = {"time_of_day": [], "bid": []}
         return self._get_obs()
 
     def _get_obs(self):
@@ -103,24 +129,19 @@ class BiddingEnv(gym.Env):
                          0.2 * gender_factor) * 3
 
         # Add noise to not overfit
-        noise = np.random.normal(loc=0.0, scale=0.001)
+        noise = np.random.normal(loc=0.0, scale=0.05)
 
         # Calculate reward, which will be a function of the
         # encoded demographics plus noise
-        # reward = 1.0 - abs(bid - context_score) / 3
-
-        optimal_bid = int(np.clip(round(context_score), 0, 3))
-        reward = 1.0 if bid == optimal_bid else 0.0  # or 0.1 as baseline
-        reward = 1.0 - abs(bid - optimal_bid) / 3
-
+        reward = 1.0 - abs(bid - context_score) / 3
         reward += noise
         reward = np.clip(reward, 0.0, 1.0)
-        print(f"bid:{bid}, context_score:{context_score}, reward:{reward}")
 
         self.current_index = (self.current_index + 1) % self.num_samples
-        done = (self.current_index == 0) or (self.current_index >= self.max_steps)
+        # done = (self.current_index == 0) or (self.current_index >= self.max_steps)
+        self.steps_taken += 1
+        done = self.steps_taken >= self.max_steps
         return self._get_obs(), reward, done, {}
-
 
     def get_batch(self, batch_size=32):
         indices = np.random.choice(self.num_samples, size=batch_size, replace=False)
@@ -177,11 +198,14 @@ class ContextualBanditAgent:
 # ------------------------------------------------------------------------------------------------------------
 # Training loop for the contextual bandit agent.
 # ------------------------------------------------------------------------------------------------------------
-def train_contextual_bandit(env, episodes=500, log_path='bandit_logs.csv'):
+def train_contextual_bandit(env, episodes=500, log_path='bandit_logs.csv', agent_type="epsilon"):
     print("🧠 Epsilon-Greedy contextual bandit")
-    # agent = EpsilonGreedyAgent(n_actions=env.action_space.n, epsilon=0.1)
-    agent = ContextualBanditAgent(n_actions=env.action_space.n,
-                                  context_dim=env.observation_space.shape[0], epsilon=0.1)
+    if agent_type == "contextual":
+        agent = ContextualBanditAgent(n_actions=env.action_space.n,
+                                      context_dim=env.observation_space.shape[0], epsilon=0.1)
+    else:
+        agent = EpsilonGreedyAgent(n_actions=env.action_space.n, epsilon=0.1)
+
     rewards = []
     log_data = []
 
@@ -206,8 +230,12 @@ def train_contextual_bandit(env, episodes=500, log_path='bandit_logs.csv'):
                 observe_user_response() → reward
             """
             next_state, reward, done, _ = env.step(action)
-            # agent.update(action, reward)
-            agent.update(state, action, reward)
+            next_state = next_state / (np.linalg.norm(next_state) + 1e-8)
+
+            if agent_type == "contextual":
+                agent.update(state, action, reward)
+            else:
+                agent.update(action, reward)
 
             total_reward += reward
             state = next_state
@@ -225,8 +253,12 @@ def train_contextual_bandit(env, episodes=500, log_path='bandit_logs.csv'):
         all_time_of_day.extend(env.labels["time_of_day"])
         all_bids.extend(env.labels["bid"])
 
+        print(f"Episode {episode}: Total Reward = {total_reward:.2f}, Steps = {steps}")
+
         if episode % 100 == 0:
             print(f"Episode {episode}: Total Reward = {total_reward:.2f}")
+            if agent_type == "contextual":
+                print(f"Q-values: {[np.round(np.dot(w, state), 3) for w in agent.models]}")
 
     # Save logs
     keys = log_data[0].keys()
@@ -264,6 +296,9 @@ def train_ppo(env, timesteps=5000):
         reward = float(reward)
         total_reward += reward
         rewards.append(total_reward)
+
+        if len(rewards) % 100 == 0:
+            print(f"Step {len(rewards)}: Avg Reward = {np.mean(rewards[-100:]):.2f}")
 
     print(f"Total PPO reward: {total_reward:.2f}")
     return model, rewards
@@ -347,28 +382,29 @@ if __name__ == "__main__":
     print("Training contextual bandit agent (offline RL)...")
     bandit_agent, bandit_rewards = train_contextual_bandit(bandit_env, episodes=500)
     plot_reward_curve(bandit_rewards)
+    test_oracle_policy(bandit_env)
 
-    # # === 2. Train Autoencoder (PyTorch) ===
-    # encoded_states = train_autoencoder_pytorch(embeddings_path='state_embeddings.npy')
-    #
-    # # === 3. Visualize Encoded Embeddings ===
-    # visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.npy")
-    # visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.npy", label_type="time_of_day")
-    # visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.npy", label_type="bid")
-    #
-    # # === 4. Clustering on Encoded Embeddings ===
-    # cluster_embeddings(method="kmeans", embedding_file="encoded_states_pytorch.npy", n_clusters=5)
-    # cluster_embeddings(method="dbscan", embedding_file="encoded_states_pytorch.npy")
-    #
-    # # === 5. PPO Agent (Online RL) ===
-    # from stable_baselines3.common.vec_env import DummyVecEnv
-    # ppo_env = DummyVecEnv([lambda: BiddingEnv(df)])
-    # print("Training PPO agent (policy gradient for online rollout)...")
-    # ppo_model, ppo_rewards = train_ppo(ppo_env, timesteps=5000)
-    #
-    # # === 6. Compare Bandit vs PPO Rewards ===
-    # compare_rewards(bandit_rewards, ppo_rewards)
-    #
+    # === 2. Train Autoencoder (PyTorch) ===
+    encoded_states = train_autoencoder_pytorch(embeddings_path='state_embeddings.npy')
+
+    # === 3. Visualize Encoded Embeddings ===
+    visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.npy")
+    visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.npy", label_type="time_of_day")
+    visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.npy", label_type="bid")
+
+    # === 4. Clustering on Encoded Embeddings ===
+    cluster_embeddings(method="kmeans", embedding_file="encoded_states_pytorch.npy", n_clusters=5)
+    cluster_embeddings(method="dbscan", embedding_file="encoded_states_pytorch.npy")
+
+    # === 5. PPO Agent (Online RL) ===
+    from stable_baselines3.common.vec_env import DummyVecEnv
+    ppo_env = DummyVecEnv([lambda: BiddingEnv(df)])
+    print("Training PPO agent (policy gradient for online rollout)...")
+    ppo_model, ppo_rewards = train_ppo(ppo_env, timesteps=20000)
+
+    # === 6. Compare Bandit vs PPO Rewards ===
+    compare_rewards(bandit_rewards, ppo_rewards)
+
     # # === 7. Run PPO Online Rollout (for demo) ===
     # rollout_env = BiddingEnv(df)  # unwrapped env for rollout
     # state = rollout_env.reset()

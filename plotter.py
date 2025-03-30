@@ -17,7 +17,7 @@ def smooth(y, box_pts=20):
 def plot_reward_curve(rewards):
     plt.figure(figsize=(10, 5))
     # plt.plot(rewards, label="Episode Reward")
-    plt.plot(smooth(rewards))
+    plt.plot(smooth(rewards)[:-20], label="Episode Reward")
     plt.xlabel("Episode")
     plt.ylabel("Total Reward")
     plt.title("Reward Curve over Training")
@@ -110,9 +110,10 @@ def cluster_embeddings(method="kmeans", embedding_file="encoded_states_pytorch.n
 
 
 def compare_rewards(bandit_rewards, ppo_rewards):
+    min_count = min(len(bandit_rewards), len(ppo_rewards))
     plt.figure(figsize=(10, 5))
-    plt.plot(bandit_rewards, label="Bandit (Offline)", alpha=0.8)
-    plt.plot(ppo_rewards, label="PPO (Online Rollout)", alpha=0.8)
+    plt.plot(bandit_rewards[:min_count], label="Bandit (Offline)", alpha=0.8)
+    plt.plot(ppo_rewards[:min_count], label="PPO (Online Rollout)", alpha=0.8)
     plt.xlabel("Episode / Step")
     plt.ylabel("Reward")
     plt.title("Reward Comparison: Bandit vs PPO")
