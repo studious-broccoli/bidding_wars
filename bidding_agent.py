@@ -51,13 +51,31 @@ def plot_reward_curve(rewards):
     plt.grid(True)
     plt.tight_layout()
     plt.savefig("reward_curve.png")
-    plt.show()
+    plt.close('all')
     print("[✓] Reward curve saved as 'reward_curve.png'")
 
 
+# def visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.npy", label_type="time_of_day"):
+#     X = np.load(embedding_file)
+#     if X.shape[0] < 5:
+#         print(f"[⚠️] Not enough data to visualize embeddings: only {X.shape[0]} samples.")
+#         return
+#
+#     labels = np.load(f"labels_{label_type}.npy", allow_pickle=True)
+#     if len(labels) != len(X):
+#         print(f"[⚠️] Label and embedding size mismatch: {len(labels)} vs {len(X)}")
+#         return
+
 def visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.npy", label_type="time_of_day"):
     X = np.load(embedding_file)
+    if X.shape[0] < 5:
+        print(f"[⚠️] Not enough data to visualize embeddings: only {X.shape[0]} samples.")
+        return
+
     labels = np.load(f"labels_{label_type}.npy", allow_pickle=True)
+    if len(labels) != len(X):
+        print(f"[⚠️] Label and embedding size mismatch: {len(labels)} vs {len(X)}")
+        return
 
     if method == "umap":
         reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=42)
@@ -77,7 +95,7 @@ def visualize_embeddings(method="umap", embedding_file="encoded_states_pytorch.n
     plt.tight_layout()
     plt.grid(True)
     plt.savefig(f"{method}_{label_type}_plot.png")
-    plt.show()
+    plt.close()
 
 
 def cluster_embeddings(method="kmeans", embedding_file="encoded_states_pytorch.npy", n_clusters=5):
@@ -111,7 +129,7 @@ def cluster_embeddings(method="kmeans", embedding_file="encoded_states_pytorch.n
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(f"{method}_clusters.png")
-    plt.show()
+    plt.close()
 
     print(f"[✓] Cluster plot saved as '{method}_clusters.png'")
     return labels
@@ -128,7 +146,7 @@ def compare_rewards(bandit_rewards, ppo_rewards):
     plt.grid(True)
     plt.tight_layout()
     plt.savefig("ppo_vs_bandit_rewards.png")
-    plt.show()
+    plt.close()
     print("[✓] Comparison plot saved as 'ppo_vs_bandit_rewards.png'")
 
 # ------------------------------------------------------------------------------------------------------------
