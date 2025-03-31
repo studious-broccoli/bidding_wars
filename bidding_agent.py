@@ -25,6 +25,7 @@ from torch.utils.data import TensorDataset, DataLoader
 from sklearn.model_selection import train_test_split
 from simulate_data import create_simulated
 from plotter import *
+from utils import test_oracle_policy
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 # export LC_ALL="en_US.UTF-8"
